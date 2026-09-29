@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Remote Desktop</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #f4f7fb; font-family: sans-serif; }
+    body { display: flex; flex-direction: column; }
+    #home { padding: 24px; }
+    h1 { margin: 0 0 8px; }
+    input, button { width: 100%; box-sizing: border-box; font-size: 18px; padding: 12px; margin-top: 10px; border-radius: 12px; border: 1px solid #c9d4e5; }
+    button { background: #2563eb; color: white; border: 0; font-weight: 700; }
+    #status { color: #475569; }
+    #session { display: none; flex: 1; flex-direction: column; background: #000; }
+    #bar { display: flex; gap: 8px; padding: 8px; background: #111827; }
+    #bar button { width: auto; flex: 1; }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; touch-action: none; }
+  </style>
+</head>
+<body>
+  <div id="home">
+    <h1>Remote Desktop</h1>
+    <p>PC pe Agent khula hona chahiye. Us Device ID ko yahan daalo.</p>
+    <input id="server" value="https://remote-desktop-server-qm51.onrender.com" />
+    <input id="device" inputmode="numeric" placeholder="312-346-486" />
+    <button id="connect">CONNECT</button>
+    <p id="status">PC Agent online ho, phir CONNECT.</p>
+  </div>
+  <div id="session">
+    <div id="bar">
+      <button id="stop" style="background:#e11d48">Disconnect</button>
+    </div>
+    <video id="video" autoplay playsinline muted></video>
+  </div>
+  <script>
+    const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
+    const home = document.getElementById("home");
+    const session = document.getElementById("session");
+    const status = document.getElementById("status");
+    const video = document.getElementById("video");
+    let socket, pc, channel, peerId, connected = false;
+    function norm(raw) {
+      const d = raw.replace(/\D/g, "").slice(0, 9);
+      if (d.length <= 3) return d;
+      if (d.length <= 6) return d.slice(0, 3) + "-" + d.slice(3);
+      return d.slice(0, 3) + "-" + d.slice(3, 6) + "-" + d.slice(6);
+    }
+    function send(msg) {
+      if (channel && channel.readyState === "open" && connected) channel.send(JSON.stringify(msg));
+    }
+    function point(touch) {
+      const r = video.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return null;
+      const x = (touch.clientX - r.left) / r.width;
+      const y = (touch.clientY - r.top) / r.height;
+      if (x < 0 || y < 0 || x > 1 || y > 1) return null;
+      return { x, y };
+    }
+    function cleanup() {
+      connected = false;
+      if (channel) channel.close();
+      channel = null;
+      if (pc) pc.close();
+      pc = null;
+      peerId = null;
+      video.srcObject = null;
+    }
+    function disconnect(text) {
+      if (socket) socket.emit("end-session");
+      cleanup();
+      session.style.display = "none";
+      home.style.display = "block";
+      status.textContent = text || "Disconnected.";
+    }
+    document.getElementById("connect").onclick = () => {
+      const id = norm(document.getElementById("device").value);
+      document.getElementById("device").value = id;
+      if (!/^\d{3}-\d{3}-\d{3}$/.test(id)) {
+        status.textContent = "Device ID 312-346-486 jaisa hona chahiye.";
+        return;
+      }
+      if (socket) socket.disconnect();
+      cleanup();
+      status.textContent = "Requesting access...";
+      socket = io(document.getElementById("server").value, { transports: ["websocket", "polling"] });
+      socket.on("connect_error", () => { status.textContent = "Signaling server nahi mila."; });
+      socket.on("error-message", (p) => { status.textContent = p.message; cleanup(); });
+      socket.on("waiting-approval", () => { status.textContent = "PC pe ACCEPT dabao."; });
+      socket.on("request-rejected", () => { status.textContent = "PC ne reject kar diya."; cleanup(); });
+      socket.on("session-ready", (p) => {
+        peerId = p.peerId;
+        status.textContent = "Connecting...";
+        pc = new RTCPeerConnection({ iceServers: ICE });
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        pc.ontrack = (e) => { video.srcObject = e.streams[0] || new MediaStream([e.track]); };
+        pc.ondatachannel = (e) => {
+          channel = e.channel;
+          channel.onopen = () => {
+            connected = true;
+            home.style.display = "none";
+            session.style.display = "flex";
+            video.play().catch(() => {});
+          };
+        };
+        pc.onicecandidate = (e) => {
+          if (e.candidate && peerId) socket.emit("signal-ice", { to: peerId, candidate: e.candidate.toJSON() });
+        };
+      });
+      socket.on("signal-offer", async (p) => {
+        if (!pc || !peerId) return;
+        await pc.setRemoteDescription(p.sdp);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("signal-answer", { to: peerId, sdp: answer });
+      });
+      socket.on("signal-ice", async (p) => {
+        try { await pc.addIceCandidate(p.candidate); } catch (e) {}
+      });
+      socket.on("session-ended", () => disconnect("PC ne session band kar diya."));
+      socket.emit("request-connect", { deviceId: id });
+    };
+    document.getElementById("stop").onclick = () => disconnect();
+    video.addEventListener("touchstart", (e) => {
+      const p = point(e.changedTouches[0]);
+      if (p) send({ type: "mousedown", button: "left", ...p });
+    }, { passive: true });
+    video.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      const p = point(e.changedTouches[0]);
+      if (p) send({ type: "mousemove", ...p });
+    }, { passive: false });
+    video.addEventListener("touchend", (e) => {
+      const p = point(e.changedTouches[0]);
+      if (p) send({ type: "mouseup", button: "left", ...p });
+    }, { passive: true });
+  </script>
+</body>
+</html>
