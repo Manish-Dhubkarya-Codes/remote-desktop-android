@@ -1,141 +1,483 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>Remote Desktop</title>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <style>
-    html, body { margin: 0; height: 100%; background: #f4f7fb; font-family: sans-serif; }
-    body { display: flex; flex-direction: column; }
-    #home { padding: 24px; }
-    h1 { margin: 0 0 8px; }
-    input, button { width: 100%; box-sizing: border-box; font-size: 18px; padding: 12px; margin-top: 10px; border-radius: 12px; border: 1px solid #c9d4e5; }
-    button { background: #2563eb; color: white; border: 0; font-weight: 700; }
-    #status { color: #475569; }
-    #session { display: none; flex: 1; flex-direction: column; background: #000; }
-    #bar { display: flex; gap: 8px; padding: 8px; background: #111827; }
-    #bar button { width: auto; flex: 1; }
-    video { width: 100%; height: 100%; object-fit: contain; background: #000; touch-action: none; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Remote Desktop</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; --ink:#1e293b; --muted:#64748b; --line:#dbe7f5; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    color: var(--ink);
+    background:
+      radial-gradient(900px 420px at -10% -20%, #c4b5fd 0%, transparent 55%),
+      radial-gradient(700px 380px at 110% 0%, #67e8f9 0%, transparent 50%),
+      linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  }
+  main { padding: 22px 16px 32px; max-width: 640px; margin: 0 auto; }
+  .eyebrow { margin: 0 0 8px; letter-spacing: 0.18em; font-size: 11px; font-weight: 800; color: #7c3aed; }
+  h1 { margin: 0; font-size: 28px; color: #0f172a; }
+  h2 { margin: 0 0 8px; font-size: 18px; }
+  .sub, .status, .hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .card { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: #fff; box-shadow: 0 10px 30px rgba(37,99,235,.08); }
+  .card.id-card { background: linear-gradient(135deg, #fff 0%, #f5f3ff 55%, #ecfeff 100%); }
+  .card.active { border-color: #fb7185; background: linear-gradient(135deg, #fff1f2, #ffe4e6); }
+  .card.ask { border-color: #67e8f9; background: linear-gradient(135deg, #ecfeff, #fff); }
+  .label { font-size: 12px; font-weight: 700; color: #6366f1; }
+  .device-id { margin: 8px 0 16px; font-family: ui-monospace, Menlo, monospace; font-size: 26px; letter-spacing: .12em; color: #4f46e5; word-break: break-all; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  button { border: 0; border-radius: 12px; padding: 10px 14px; font-weight: 800; color: #fff; background: linear-gradient(135deg, #06b6d4, #2563eb); }
+  button.ghost { background: #e0e7ff; color: #3730a3; }
+  button.danger { background: linear-gradient(135deg, #fb7185, #e11d48); }
+  button.full { width: 100%; margin-top: 4px; }
+  button.icon { background: #dcfce7; color: #166534; }
+  button.icon.off { background: #ffe4e6; color: #be123c; }
+  .hidden { display: none !important; }
+  input[type="text"], input[type="numeric"] {
+    width: 100%; margin: 12px 0; border: 1px solid #c7d2fe; border-radius: 12px; background: #f8fafc; color: #0f172a;
+    font-family: ui-monospace, Menlo, monospace; font-size: 22px; letter-spacing: .14em; text-align: center; padding: 12px;
+  }
+  select.quality { border: 1px solid #c7d2fe; border-radius: 12px; background: #eef2ff; color: #312e81; font-weight: 800; padding: 8px 10px; }
+  .viewer { position: fixed; inset: 0; display: flex; flex-direction: column; background: #dbeafe; z-index: 5; }
+  .viewer header {
+    min-height: 52px; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 8px 10px; background: #fff; color: #0f172a; border-bottom: 1px solid #dbe7f5;
+  }
+  #viewer-title { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #bfdbfe; overflow: hidden; touch-action: none; }
+  #remote-video { display: block; background: #fff; box-shadow: 0 12px 40px rgba(15,23,42,.18); touch-action: none; }
+  #local-cursor {
+    position: absolute; left: 0; top: 0; width: 18px; height: 22px; pointer-events: none; z-index: 5;
+    background: no-repeat 0 0 / 18px 22px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='22' viewBox='0 0 18 22'%3E%3Cpath d='M1 1 L1 18 L5.4 13.6 L8.6 20.2 L11.1 19.2 L7.9 12.6 L14.2 12.6 Z' fill='white' stroke='black' stroke-width='1.3' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  .history { margin-top: 14px; }
+  .history-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .history-name-input { flex: 1; margin: 0 !important; font-family: inherit !important; font-size: 14px !important; letter-spacing: 0 !important; text-align: left !important; padding: 10px 12px !important; }
+  .history-connect { flex: 1; background: #eef2ff; color: #312e81; border: 1px solid #c7d2fe; font-family: ui-monospace, Menlo, monospace; letter-spacing: .06em; }
+  @media (orientation: landscape) {
+    main { padding: 12px 16px 20px; }
+    h1 { font-size: 22px; }
+    .device-id { font-size: 22px; }
+  }
+</style>
 </head>
 <body>
-  <div id="home">
-    <h1>Remote Desktop</h1>
-    <p>PC pe Agent khula hona chahiye. Us Device ID ko yahan daalo.</p>
-    <input id="server" value="https://remote-desktop-server-qm51.onrender.com" />
-    <input id="device" inputmode="numeric" placeholder="312-346-486" />
-    <button id="connect">CONNECT</button>
-    <p id="status">PC Agent online ho, phir CONNECT.</p>
-  </div>
-  <div id="session">
-    <div id="bar">
-      <button id="stop" style="background:#e11d48">Disconnect</button>
+<main id="home">
+  <p class="eyebrow">DESKTOP AGENT</p>
+  <h1>Remote Desktop</h1>
+  <p class="sub">This device can be found by its ID, and you can control a PC from here.</p>
+  <section class="card id-card">
+    <div class="label">Your Device ID</div>
+    <div id="device-id" class="device-id">--- --- ---</div>
+    <div class="row">
+      <button id="copy-btn" type="button">Copy ID</button>
+      <button id="reset-btn" type="button" class="ghost">Reset ID</button>
     </div>
-    <video id="video" autoplay playsinline muted></video>
+    <div class="row">
+      <button id="host-audio-btn" type="button" class="icon">Sound on</button>
+    </div>
+    <p class="hint">Sound from this device. Only you can turn it on or off.</p>
+    <p id="status" class="status">Connecting…</p>
+  </section>
+  <section id="incoming" class="card ask hidden">
+    <h2>Remote connection requested</h2>
+    <p>Someone wants to view and control this device.</p>
+    <div class="row">
+      <button id="accept-btn" type="button">ACCEPT</button>
+      <button id="reject-btn" type="button" class="danger">REJECT</button>
+    </div>
+  </section>
+  <section id="active" class="card active hidden">
+    <h2>REMOTE ACCESS ACTIVE</h2>
+    <p>This screen is being shared.</p>
+    <button id="stop-btn" type="button" class="danger">STOP</button>
+  </section>
+  <section class="card">
+    <div class="label">Connect to another device</div>
+    <p class="hint">Enter the other computer’s Device ID. After they ACCEPT, their screen opens here. Turn the phone sideways for a wider view.</p>
+    <input id="remote-id" type="text" inputmode="numeric" placeholder="000-000-000" autocomplete="off" spellcheck="false" />
+    <button id="connect-btn" type="button" class="full">CONNECT</button>
+    <p id="viewer-status" class="status"></p>
+    <div id="history-wrap" class="history hidden">
+      <div class="label">Recent devices</div>
+      <div id="history"></div>
+    </div>
+  </section>
+</main>
+<section id="viewer" class="viewer hidden">
+  <header>
+    <span id="viewer-title">Remote session</span>
+    <div class="actions">
+      <button id="hear-btn" type="button" class="icon">Sound on</button>
+      <select id="quality" class="quality" title="Picture quality">
+        <option value="2160">2160p 4K</option>
+        <option value="1440">1440p</option>
+        <option value="1080" selected>1080p</option>
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+      </select>
+      <button id="disconnect-btn" type="button" class="danger">Disconnect</button>
+    </div>
+  </header>
+  <div id="stage" class="stage">
+    <video id="remote-video" autoplay playsinline></video>
+    <div id="local-cursor" class="hidden"></div>
   </div>
-  <script>
-    const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
-    const home = document.getElementById("home");
-    const session = document.getElementById("session");
-    const status = document.getElementById("status");
-    const video = document.getElementById("video");
-    let socket, pc, channel, peerId, connected = false;
-    function norm(raw) {
-      const d = raw.replace(/\D/g, "").slice(0, 9);
-      if (d.length <= 3) return d;
-      if (d.length <= 6) return d.slice(0, 3) + "-" + d.slice(3);
-      return d.slice(0, 3) + "-" + d.slice(3, 6) + "-" + d.slice(6);
+  <audio id="remote-audio" autoplay playsinline></audio>
+</section>
+<script>
+const SERVER = "https://remote-desktop-server-qm51.onrender.com";
+const ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+const ID_KEY = "rd-device-id";
+const HISTORY_KEY = "rd-history-v2";
+const SOUND_KEY = "rd-share-audio";
+const homeEl = document.getElementById("home");
+const viewerEl = document.getElementById("viewer");
+const videoEl = document.getElementById("remote-video");
+const audioEl = document.getElementById("remote-audio");
+const deviceIdEl = document.getElementById("device-id");
+const statusEl = document.getElementById("status");
+const viewerStatusEl = document.getElementById("viewer-status");
+const viewerTitleEl = document.getElementById("viewer-title");
+const incomingEl = document.getElementById("incoming");
+const activeEl = document.getElementById("active");
+const remoteIdInput = document.getElementById("remote-id");
+const hostAudioBtn = document.getElementById("host-audio-btn");
+const hearBtn = document.getElementById("hear-btn");
+const qualitySelect = document.getElementById("quality");
+const localCursor = document.getElementById("local-cursor");
+const stage = document.getElementById("stage");
+
+let deviceId = "";
+let hostSocket = null, viewerSocket = null;
+let hostPc = null, viewerPc = null;
+let hostPeerId = null, viewerPeerId = null;
+let pendingViewerId = null;
+let controlChannel = null, controlOpen = false;
+let shareAudio = localStorage.getItem(SOUND_KEY) !== "0";
+let hear = true;
+let quality = "1080";
+let remoteStream = null;
+const pointers = new Map();
+
+function show(el, visible) { el.classList.toggle("hidden", !visible); }
+function setStatus(t) { statusEl.textContent = t; }
+function setViewerStatus(t) { viewerStatusEl.textContent = t; }
+function valid(id) { return /^\d{3}-\d{3}-\d{3}$/.test(id); }
+function norm(raw) {
+  const d = String(raw || "").replace(/\D/g, "").slice(0, 9);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return d.slice(0, 3) + "-" + d.slice(3);
+  return d.slice(0, 3) + "-" + d.slice(3, 6) + "-" + d.slice(6);
+}
+function makeId() {
+  const part = () => Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+  return part() + "-" + part() + "-" + part();
+}
+function loadId() {
+  let id = localStorage.getItem(ID_KEY) || "";
+  if (!valid(id)) { id = makeId(); localStorage.setItem(ID_KEY, id); }
+  return id;
+}
+function applyHostAudio() {
+  hostAudioBtn.textContent = shareAudio ? "Sound on" : "Sound off";
+  hostAudioBtn.classList.toggle("off", !shareAudio);
+  localStorage.setItem(SOUND_KEY, shareAudio ? "1" : "0");
+}
+function applyHear() {
+  hearBtn.textContent = hear ? "Sound on" : "Sound off";
+  hearBtn.classList.toggle("off", !hear);
+  audioEl.muted = !hear;
+  if (hear) void audioEl.play().catch(() => {});
+}
+function parseHistory(raw) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const items = [];
+    for (const item of parsed) {
+      if (item && valid(String(item.id))) items.push({ id: String(item.id), name: String(item.name || "").slice(0, 40) });
     }
-    function send(msg) {
-      if (channel && channel.readyState === "open" && connected) channel.send(JSON.stringify(msg));
-    }
-    function point(touch) {
-      const r = video.getBoundingClientRect();
-      if (r.width <= 0 || r.height <= 0) return null;
-      const x = (touch.clientX - r.left) / r.width;
-      const y = (touch.clientY - r.top) / r.height;
-      if (x < 0 || y < 0 || x > 1 || y > 1) return null;
-      return { x, y };
-    }
-    function cleanup() {
-      connected = false;
-      if (channel) channel.close();
-      channel = null;
-      if (pc) pc.close();
-      pc = null;
-      peerId = null;
-      video.srcObject = null;
-    }
-    function disconnect(text) {
-      if (socket) socket.emit("end-session");
-      cleanup();
-      session.style.display = "none";
-      home.style.display = "block";
-      status.textContent = text || "Disconnected.";
-    }
-    document.getElementById("connect").onclick = () => {
-      const id = norm(document.getElementById("device").value);
-      document.getElementById("device").value = id;
-      if (!/^\d{3}-\d{3}-\d{3}$/.test(id)) {
-        status.textContent = "Device ID 312-346-486 jaisa hona chahiye.";
-        return;
-      }
-      if (socket) socket.disconnect();
-      cleanup();
-      status.textContent = "Requesting access...";
-      socket = io(document.getElementById("server").value, { transports: ["websocket", "polling"] });
-      socket.on("connect_error", () => { status.textContent = "Signaling server nahi mila."; });
-      socket.on("error-message", (p) => { status.textContent = p.message; cleanup(); });
-      socket.on("waiting-approval", () => { status.textContent = "PC pe ACCEPT dabao."; });
-      socket.on("request-rejected", () => { status.textContent = "PC ne reject kar diya."; cleanup(); });
-      socket.on("session-ready", (p) => {
-        peerId = p.peerId;
-        status.textContent = "Connecting...";
-        pc = new RTCPeerConnection({ iceServers: ICE });
-        pc.addTransceiver("video", { direction: "recvonly" });
-        pc.addTransceiver("audio", { direction: "recvonly" });
-        pc.ontrack = (e) => { video.srcObject = e.streams[0] || new MediaStream([e.track]); };
-        pc.ondatachannel = (e) => {
-          channel = e.channel;
-          channel.onopen = () => {
-            connected = true;
-            home.style.display = "none";
-            session.style.display = "flex";
-            video.play().catch(() => {});
-          };
-        };
-        pc.onicecandidate = (e) => {
-          if (e.candidate && peerId) socket.emit("signal-ice", { to: peerId, candidate: e.candidate.toJSON() });
-        };
-      });
-      socket.on("signal-offer", async (p) => {
-        if (!pc || !peerId) return;
-        await pc.setRemoteDescription(p.sdp);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("signal-answer", { to: peerId, sdp: answer });
-      });
-      socket.on("signal-ice", async (p) => {
-        try { await pc.addIceCandidate(p.candidate); } catch (e) {}
-      });
-      socket.on("session-ended", () => disconnect("PC ne session band kar diya."));
-      socket.emit("request-connect", { deviceId: id });
+    return items.slice(0, 8);
+  } catch { return []; }
+}
+function loadHistory() { return parseHistory(localStorage.getItem(HISTORY_KEY)); }
+function writeHistory(items) { localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 8))); }
+function saveHistory(id) {
+  const prev = loadHistory();
+  const existing = prev.find((item) => item.id === id);
+  writeHistory([{ id, name: existing ? existing.name : "" }, ...prev.filter((item) => item.id !== id)].slice(0, 8));
+  renderHistory();
+}
+function renderHistory() {
+  const wrap = document.getElementById("history-wrap");
+  const list = document.getElementById("history");
+  const items = loadHistory();
+  list.replaceChildren();
+  show(wrap, items.length > 0);
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "history-row";
+    const nameInput = document.createElement("input");
+    nameInput.className = "history-name-input";
+    nameInput.type = "text";
+    nameInput.placeholder = "Name";
+    nameInput.value = item.name;
+    nameInput.addEventListener("input", () => {
+      writeHistory(loadHistory().map((entry) => entry.id === item.id ? { id: entry.id, name: nameInput.value.slice(0, 40) } : entry));
+    });
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-connect";
+    button.textContent = item.id;
+    button.addEventListener("click", () => { remoteIdInput.value = item.id; connectToRemote(); });
+    row.append(nameInput, button);
+    list.appendChild(row);
+  }
+}
+function sendControl(msg) {
+  if (!controlChannel || controlChannel.readyState !== "open" || !controlOpen) return;
+  controlChannel.send(JSON.stringify(msg));
+}
+function fitVideo() {
+  const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+  if (!vw || !vh) return;
+  const scale = Math.min(stage.clientWidth / vw, stage.clientHeight / vh);
+  videoEl.style.width = Math.max(1, Math.floor(vw * scale)) + "px";
+  videoEl.style.height = Math.max(1, Math.floor(vh * scale)) + "px";
+}
+function videoPoint(clientX, clientY) {
+  fitVideo();
+  const rect = videoEl.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const x = (clientX - rect.left) / rect.width;
+  const y = (clientY - rect.top) / rect.height;
+  if (x < 0 || y < 0 || x > 1 || y > 1) return null;
+  return { x, y };
+}
+function placeCursor(clientX, clientY) {
+  const stageRect = stage.getBoundingClientRect();
+  const p = videoPoint(clientX, clientY);
+  localCursor.classList.toggle("hidden", !p);
+  if (!p) return;
+  localCursor.style.transform = "translate(" + (clientX - stageRect.left) + "px," + (clientY - stageRect.top) + "px)";
+}
+function copyId() {
+  const text = deviceId;
+  if (window.AndroidBridge && AndroidBridge.copy) AndroidBridge.copy(text);
+  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+  setStatus("Device ID copied.");
+}
+function unlockAudio() {
+  audioEl.muted = false;
+  const silent = document.createElement("audio");
+  silent.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  void silent.play().catch(() => {});
+  void audioEl.play().catch(() => {});
+}
+function attachRemote(stream) {
+  const videos = stream.getVideoTracks();
+  const audios = stream.getAudioTracks();
+  if (videos.length) {
+    videoEl.srcObject = new MediaStream(videos);
+    videoEl.muted = true;
+    void videoEl.play().catch(() => {});
+  }
+  if (audios.length) {
+    audioEl.srcObject = new MediaStream(audios);
+    audioEl.muted = !hear;
+    void audioEl.play().catch(() => {});
+  }
+}
+function closeViewer(notice) {
+  controlOpen = false;
+  if (controlChannel) controlChannel.close();
+  controlChannel = null;
+  if (viewerPc) viewerPc.close();
+  viewerPc = null; viewerPeerId = null; remoteStream = null;
+  videoEl.srcObject = null;
+  audioEl.srcObject = null;
+  localCursor.classList.add("hidden");
+  show(viewerEl, false);
+  show(homeEl, true);
+  if (notice) setViewerStatus(notice);
+}
+function openViewer() {
+  show(homeEl, false);
+  show(viewerEl, true);
+  if (remoteStream) attachRemote(remoteStream);
+  videoEl.onloadedmetadata = fitVideo;
+  videoEl.onresize = fitVideo;
+  setTimeout(fitVideo, 200);
+  setTimeout(fitVideo, 800);
+}
+function connectToRemote() {
+  unlockAudio();
+  const id = norm(remoteIdInput.value);
+  remoteIdInput.value = id;
+  if (!valid(id)) { setViewerStatus("ID format: 123-456-789"); return; }
+  if (id === deviceId) { setViewerStatus("Apna ID mat daalo."); return; }
+  saveHistory(id);
+  const named = loadHistory().find((item) => item.id === id);
+  viewerTitleEl.textContent = named && named.name ? named.name + "  " + id : id;
+  setViewerStatus("Request bhej rahe hain…");
+  viewerSocket && viewerSocket.emit("request-connect", { deviceId: id });
+}
+async function teardownHost(notice) {
+  if (hostPc) hostPc.close();
+  hostPc = null; hostPeerId = null; pendingViewerId = null;
+  show(incomingEl, false); show(activeEl, false);
+  if (notice) setStatus(notice);
+}
+async function startHostSession(viewerId) {
+  hostPeerId = viewerId;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: shareAudio });
+  } catch (e) {
+    hostSocket && hostSocket.emit("end-session");
+    await teardownHost("Is phone ki screen share abhi nahi ho sakti. PC control karne ke liye PC ka ID daalo.");
+    return;
+  }
+  stream.getAudioTracks().forEach((track) => { track.enabled = shareAudio; });
+  hostPc = new RTCPeerConnection({ iceServers: ICE });
+  stream.getTracks().forEach((track) => hostPc.addTrack(track, stream));
+  const channel = hostPc.createDataChannel("control");
+  channel.onopen = () => { show(incomingEl, false); show(activeEl, true); setStatus("Remote access active."); };
+  hostPc.onicecandidate = (event) => {
+    if (event.candidate && hostPeerId) hostSocket.emit("signal-ice", { to: hostPeerId, candidate: event.candidate.toJSON() });
+  };
+  const offer = await hostPc.createOffer();
+  await hostPc.setLocalDescription(offer);
+  hostSocket.emit("signal-offer", { to: viewerId, sdp: offer });
+}
+function connectSignaling() {
+  hostSocket = io(SERVER, { transports: ["websocket", "polling"] });
+  viewerSocket = io(SERVER, { transports: ["websocket", "polling"] });
+  hostSocket.on("connect", () => hostSocket.emit("register-agent", { deviceId }));
+  hostSocket.on("connect_error", () => setStatus("Cannot reach signaling server."));
+  hostSocket.on("registered", () => setStatus("Online. Waiting for a connection request."));
+  hostSocket.on("error-message", (p) => setStatus(p.message));
+  hostSocket.on("incoming-request", (p) => {
+    if (hostPeerId) { hostSocket.emit("reject-request", { viewerId: p.viewerId }); return; }
+    pendingViewerId = p.viewerId;
+    show(incomingEl, true);
+    setStatus("Remote connection requested.");
+  });
+  hostSocket.on("session-ready", (p) => { void startHostSession(p.peerId); });
+  hostSocket.on("signal-answer", async (p) => { if (hostPc) await hostPc.setRemoteDescription(p.sdp); });
+  hostSocket.on("signal-ice", async (p) => { try { await hostPc.addIceCandidate(p.candidate); } catch (e) {} });
+  hostSocket.on("session-ended", () => { void teardownHost("Session ended. Still online with the same Device ID."); });
+
+  viewerSocket.on("error-message", (p) => setViewerStatus(p.message));
+  viewerSocket.on("waiting-approval", () => setViewerStatus("Dusre device pe ACCEPT ka wait…"));
+  viewerSocket.on("request-rejected", () => setViewerStatus("Request reject ho gayi."));
+  viewerSocket.on("session-ready", (p) => {
+    viewerPeerId = p.peerId;
+    viewerPc = new RTCPeerConnection({ iceServers: ICE });
+    viewerPc.addTransceiver("video", { direction: "recvonly" });
+    viewerPc.addTransceiver("audio", { direction: "recvonly" });
+    viewerPc.ontrack = (event) => {
+      const live = event.receiver;
+      try { live.playoutDelayHint = 0; } catch (e) {}
+      if (!remoteStream) remoteStream = new MediaStream();
+      if (!remoteStream.getTracks().includes(event.track)) remoteStream.addTrack(event.track);
+      if (event.track.kind === "video") openViewer();
+      else attachRemote(remoteStream);
     };
-    document.getElementById("stop").onclick = () => disconnect();
-    video.addEventListener("touchstart", (e) => {
-      const p = point(e.changedTouches[0]);
-      if (p) send({ type: "mousedown", button: "left", ...p });
-    }, { passive: true });
-    video.addEventListener("touchmove", (e) => {
-      e.preventDefault();
-      const p = point(e.changedTouches[0]);
-      if (p) send({ type: "mousemove", ...p });
-    }, { passive: false });
-    video.addEventListener("touchend", (e) => {
-      const p = point(e.changedTouches[0]);
-      if (p) send({ type: "mouseup", button: "left", ...p });
-    }, { passive: true });
-  </script>
+    viewerPc.ondatachannel = (event) => {
+      controlChannel = event.channel;
+      event.channel.onopen = () => { controlOpen = true; sendControl({ type: "quality", preset: quality }); };
+    };
+    viewerPc.onicecandidate = (event) => {
+      if (event.candidate && viewerPeerId) viewerSocket.emit("signal-ice", { to: viewerPeerId, candidate: event.candidate.toJSON() });
+    };
+  });
+  viewerSocket.on("signal-offer", async (p) => {
+    if (!viewerPc || !viewerPeerId) return;
+    await viewerPc.setRemoteDescription(p.sdp);
+    const answer = await viewerPc.createAnswer();
+    await viewerPc.setLocalDescription(answer);
+    viewerSocket.emit("signal-answer", { to: viewerPeerId, sdp: answer });
+  });
+  viewerSocket.on("signal-ice", async (p) => { try { await viewerPc.addIceCandidate(p.candidate); } catch (e) {} });
+  viewerSocket.on("session-ended", () => closeViewer("Session band."));
+}
+
+document.getElementById("copy-btn").onclick = copyId;
+document.getElementById("reset-btn").onclick = () => {
+  if (!confirm("Generate a new Device ID?")) return;
+  deviceId = makeId();
+  localStorage.setItem(ID_KEY, deviceId);
+  deviceIdEl.textContent = deviceId;
+  void teardownHost();
+  hostSocket && hostSocket.emit("register-agent", { deviceId });
+};
+document.getElementById("accept-btn").onclick = () => {
+  if (pendingViewerId) hostSocket.emit("accept-request", { viewerId: pendingViewerId });
+};
+document.getElementById("reject-btn").onclick = () => {
+  if (pendingViewerId) hostSocket.emit("reject-request", { viewerId: pendingViewerId });
+  pendingViewerId = null;
+  show(incomingEl, false);
+};
+document.getElementById("stop-btn").onclick = () => { hostSocket.emit("end-session"); void teardownHost("Remote access stopped."); };
+document.getElementById("connect-btn").onclick = connectToRemote;
+hostAudioBtn.onclick = () => { shareAudio = !shareAudio; applyHostAudio(); };
+hearBtn.onclick = () => { hear = !hear; applyHear(); };
+qualitySelect.onchange = () => {
+  quality = qualitySelect.value;
+  sendControl({ type: "quality", preset: quality });
+};
+remoteIdInput.addEventListener("input", () => { remoteIdInput.value = norm(remoteIdInput.value); });
+document.getElementById("disconnect-btn").onclick = () => { viewerSocket && viewerSocket.emit("end-session"); closeViewer(); };
+
+function moveFromPointer(ev) {
+  placeCursor(ev.clientX, ev.clientY);
+  const p = videoPoint(ev.clientX, ev.clientY);
+  if (p) sendControl({ type: "mousemove", x: p.x, y: p.y });
+  return p;
+}
+stage.addEventListener("pointerdown", (ev) => {
+  if (ev.pointerType === "mouse" && ev.button !== 0) return;
+  stage.setPointerCapture(ev.pointerId);
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pointers.size > 1) return;
+  const p = moveFromPointer(ev);
+  if (p) sendControl({ type: "mousedown", button: "left", x: p.x, y: p.y });
+});
+stage.addEventListener("pointermove", (ev) => {
+  if (!pointers.has(ev.pointerId)) return;
+  const prev = pointers.get(ev.pointerId);
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pointers.size >= 2) {
+    const p = videoPoint(ev.clientX, ev.clientY);
+    if (p) sendControl({ type: "wheel", x: p.x, y: p.y, deltaX: 0, deltaY: (ev.clientY - prev.y) * -2 });
+    return;
+  }
+  moveFromPointer(ev);
+});
+stage.addEventListener("pointerup", (ev) => {
+  const wasScroll = pointers.size >= 2;
+  pointers.delete(ev.pointerId);
+  if (wasScroll) return;
+  const p = videoPoint(ev.clientX, ev.clientY) || { x: 0.5, y: 0.5 };
+  sendControl({ type: "mouseup", button: "left", x: p.x, y: p.y });
+});
+stage.addEventListener("pointercancel", (ev) => pointers.delete(ev.pointerId));
+window.addEventListener("resize", () => { if (!viewerEl.classList.contains("hidden")) fitVideo(); });
+window.addEventListener("orientationchange", () => setTimeout(fitVideo, 250));
+
+deviceId = loadId();
+deviceIdEl.textContent = deviceId;
+renderHistory();
+applyHostAudio();
+applyHear();
+connectSignaling();
+</script>
 </body>
 </html>
